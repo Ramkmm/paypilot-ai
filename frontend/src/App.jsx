@@ -1,16 +1,55 @@
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
+
+function formatINR(value) {
+  return Number(value).toLocaleString("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  });
+}
 
 function App() {
   const [product, setProduct] = useState("Office chairs");
   const [budget, setBudget] = useState("100000");
   const [quantity, setQuantity] = useState("20");
+
   const [result, setResult] = useState(null);
+  const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const loadRequests = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/purchase/requests`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Unable to load requests.");
+      }
+
+      setRequests(data.requests || []);
+    } catch (err) {
+      setHistoryError(err.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRequests();
+  }, [loadRequests]);
 
   async function getRecommendation(event) {
     event.preventDefault();
@@ -25,7 +64,7 @@ function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            product,
+            product: product.trim(),
             budget: Number(budget),
             quantity: Number(quantity),
           }),
@@ -35,13 +74,14 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Request failed.");
+        throw new Error(data.detail || "Purchase request failed.");
       }
 
       setResult(data);
+      await loadRequests();
     } catch (err) {
       setError(
-        `${err.message} Check that the FastAPI backend is running.`
+        `${err.message} Check that FastAPI is running and MongoDB is connected.`
       );
     } finally {
       setLoading(false);
@@ -90,6 +130,7 @@ function App() {
                 type="number"
                 min="1"
                 max="100000000"
+                step="0.01"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
                 required
@@ -102,6 +143,7 @@ function App() {
                 type="number"
                 min="1"
                 max="100000"
+                step="1"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 required
@@ -110,12 +152,12 @@ function App() {
           </div>
 
           <button className="primary-button" disabled={loading}>
-            {loading ? "Checking request..." : "Generate purchase request"}
+            {loading ? "Saving request..." : "Generate purchase request"}
             <span>→</span>
           </button>
 
           <p className="privacy-note">
-            Demo only. No payment is initiated by this action.
+            Demo only. This action does not initiate a payment.
           </p>
         </form>
 
@@ -134,30 +176,28 @@ function App() {
             </div>
           )}
 
-          {loading && <p>Connecting to PayPilot AI API...</p>}
+          {loading && <p>Saving your request to MongoDB...</p>}
 
-          {error && <div className="error-message">{error}</div>}
+          {error && (
+            <div className="error-message" role="alert">{error}</div>
+          )}
 
           {result && (
             <div className="result-content">
               <span className="status-pill">Request prepared</span>
               <h3>{result.product_requested}</h3>
               <p className="muted">
-                {result.quantity.toLocaleString()} units requested
+                {result.quantity.toLocaleString("en-IN")} units requested
               </p>
 
               <div className="metric">
                 <span>Total budget</span>
-                <strong>
-                  ₹{result.total_budget.toLocaleString("en-IN")}
-                </strong>
+                <strong>{formatINR(result.total_budget)}</strong>
               </div>
 
               <div className="metric">
                 <span>Budget per item</span>
-                <strong>
-                  ₹{result.budget_per_item.toLocaleString("en-IN")}
-                </strong>
+                <strong>{formatINR(result.budget_per_item)}</strong>
               </div>
 
               <div className="recommendation">
@@ -166,17 +206,69 @@ function App() {
               </div>
 
               <p className="demo-notice">
-                Demo calculation only. No live product search or AI
-                recommendation has been performed yet.
+                {result.saved_to_database
+                  ? "Purchase request saved successfully to MongoDB Atlas."
+                  : "Demo result only."}
+                {" "}No live product search or AI recommendation has been performed.
               </p>
 
               <div className="approval-status">
                 <span>Payment status</span>
-                <strong>Not started</strong>
+                <strong>{result.payment_status || "Not started"}</strong>
               </div>
+
+              {result.id && (
+                <p className="muted">
+                  Request ID: {result.id}
+                </p>
+              )}
             </div>
           )}
         </section>
+      </section>
+
+      <section className="history-section">
+        <div className="history-heading">
+          <div>
+            <div className="section-label">MONGODB ATLAS</div>
+            <h2>Saved purchase requests</h2>
+          </div>
+          <button
+            type="button"
+            className="refresh-button"
+            onClick={loadRequests}
+            disabled={historyLoading}
+          >
+            {historyLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        {historyError && (
+          <p className="error-message" role="alert">{historyError}</p>
+        )}
+
+        {!historyError && requests.length === 0 && !historyLoading && (
+          <p className="muted">No saved requests found.</p>
+        )}
+
+        {requests.length > 0 && (
+          <div className="request-list">
+            {requests.map((request) => (
+              <article className="saved-request" key={request.id}>
+                <div>
+                  <h3>{request.product}</h3>
+                  <p className="muted">
+                    {request.quantity} units · {request.id}
+                  </p>
+                </div>
+                <div className="saved-request-details">
+                  <strong>{formatINR(request.budget)}</strong>
+                  <span>{request.payment_status || "Not started"}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <footer>
