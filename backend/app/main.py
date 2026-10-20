@@ -26,6 +26,7 @@ frontend_origins = [
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
         "http://localhost:5173,http://127.0.0.1:5173",
+        "https://paypilot-ai-ten.vercel.app",
     ).split(",")
     if origin.strip()
 ]
@@ -37,7 +38,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
-
 
 # MongoDB configuration
 mongodb_uri = os.getenv("MONGODB_URI")
