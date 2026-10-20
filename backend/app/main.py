@@ -22,11 +22,10 @@ app = FastAPI(
 # Local development works by default. Add the deployed Vercel origin to
 # FRONTEND_ORIGINS when deploying, e.g. https://your-app.vercel.app
 frontend_origins = [
-    origin.strip().rstrip("/")
+    origin.strip()
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
-        "https://paypilot-ai-ten.vercel.app",
+        "http://localhost:5173,https://paypilot-ai-ten.vercel.app"
     ).split(",")
     if origin.strip()
 ]
