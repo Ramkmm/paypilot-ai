@@ -29,6 +29,8 @@ frontend_origins = [
     ).split(",")
     if origin.strip()
 ]
+return_url = f"{FRONTEND_URL}/paypal/return"
+cancel_url = f"{FRONTEND_URL}/paypal/cancel"
 
 app.add_middleware(
     CORSMiddleware,
