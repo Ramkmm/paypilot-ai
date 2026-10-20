@@ -371,8 +371,8 @@ def create_paypal_order(request: PayPalCreateOrderRequest):
                 "application_context": {
                     "brand_name": "PayPilot AI",
                     "user_action": "PAY_NOW",
-                    return_url = f"{FRONTEND_URL}/paypal/return"
-                    cancel_url = f"{FRONTEND_URL}/paypal/cancel",
+                    "return_url": f"{FRONTEND_URL}/paypal/return",
+                    "cancel_url": f"{FRONTEND_URL}/paypal/cancel",
                 },
             },
             timeout=30,
