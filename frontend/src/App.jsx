@@ -1,8 +1,7 @@
-
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 function formatINR(value) {
   return Number(value).toLocaleString("en-IN", {
@@ -14,8 +13,8 @@ function formatINR(value) {
 
 function App() {
   const [product, setProduct] = useState("Office chairs");
-  const [budget, setBudget] = useState("100000");
-  const [quantity, setQuantity] = useState("20");
+  const [budget, setBudget] = useState("10000");
+  const [quantity, setQuantity] = useState("5");
 
   const [result, setResult] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -24,15 +23,19 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  const [paypalLoading, setPaypalLoading] = useState(false);
+  const [paypalMessage, setPaypalMessage] = useState("");
+  const [paypalError, setPaypalError] = useState("");
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentResult, setAgentResult] = useState(null);
+  const [agentError, setAgentError] = useState("");
+
   const loadRequests = useCallback(async () => {
     setHistoryLoading(true);
     setHistoryError("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/purchase/requests`
-      );
-
+      const response = await fetch(`${API_URL}/api/purchase/requests`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -51,25 +54,100 @@ function App() {
     loadRequests();
   }, [loadRequests]);
 
+  useEffect(() => {
+    const pathname = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
+
+    if (pathname === "/paypal/cancel") {
+      setPaypalMessage("PayPal checkout was cancelled. No payment was completed.");
+      window.history.replaceState({}, "", "/");
+      return;
+    }
+
+    if (pathname !== "/paypal/return") {
+      return;
+    }
+
+    const orderId = params.get("token");
+    window.history.replaceState({}, "", "/");
+
+    if (!orderId) {
+      setPaypalError("PayPal returned without an order ID.");
+      return;
+    }
+
+    let ignore = false;
+
+    async function capturePayment() {
+      setPaypalLoading(true);
+      setPaypalError("");
+      setPaypalMessage("Verifying your PayPal Sandbox test payment...");
+
+      try {
+        const response = await fetch(`${API_URL}/api/paypal/capture-order`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ order_id: orderId }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            typeof data.detail === "string"
+              ? data.detail
+              : "Payment verification failed."
+          );
+        }
+
+        if (ignore) return;
+
+        if (data.payment_status === "completed") {
+          setPaypalMessage(
+            "Sandbox test payment verified: $1.00 USD. Your INR purchase budget has NOT been paid."
+          );
+        } else {
+          setPaypalMessage(
+            `PayPal response: ${data.payment_status || data.status || "Check payment status"}`
+          );
+        }
+
+        await loadRequests();
+      } catch (err) {
+        if (!ignore) {
+          setPaypalError(err.message);
+          setPaypalMessage("");
+        }
+      } finally {
+        if (!ignore) setPaypalLoading(false);
+      }
+    }
+
+    capturePayment();
+
+    return () => {
+      ignore = true;
+    };
+  }, [loadRequests]);
+
   async function getRecommendation(event) {
     event.preventDefault();
     setLoading(true);
     setError("");
     setResult(null);
+    setPaypalError("");
+    setPaypalMessage("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/purchase/recommend`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            product: product.trim(),
-            budget: Number(budget),
-            quantity: Number(quantity),
-          }),
-        }
-      );
+      const response = await fetch(`${API_URL}/api/purchase/recommend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product: product.trim(),
+          budget: Number(budget),
+          quantity: Number(quantity),
+        }),
+      });
 
       const data = await response.json();
 
@@ -78,6 +156,8 @@ function App() {
       }
 
       setResult(data);
+      setAgentResult(null);
+      setAgentError("");
       await loadRequests();
     } catch (err) {
       setError(
@@ -85,6 +165,68 @@ function App() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runAgentGrid() {
+    if (!result?.id) {
+      setAgentError("Generate and save a purchase request first.");
+      return;
+    }
+    setAgentLoading(true);
+    setAgentError("");
+    setAgentResult(null);
+    try {
+      const response = await fetch(`${API_URL}/api/agents/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purchase_request_id: result.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Agent workflow failed.");
+      setAgentResult(data);
+    } catch (err) {
+      setAgentError(`${err.message} Check that the FastAPI backend is running.`);
+    } finally {
+      setAgentLoading(false);
+    }
+  }
+
+  async function startPayPalCheckout() {
+    if (!result?.id) {
+      setPaypalError("Generate and save a purchase request before starting the Sandbox test.");
+      return;
+    }
+
+    setPaypalLoading(true);
+    setPaypalError("");
+    setPaypalMessage("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/paypal/create-order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purchase_request_id: result.id }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Could not create PayPal order."
+        );
+      }
+
+      if (!data.approval_url) {
+        throw new Error("PayPal did not return an approval URL.");
+      }
+
+      window.location.assign(data.approval_url);
+    } catch (err) {
+      setPaypalError(err.message);
+      setPaypalLoading(false);
     }
   }
 
@@ -100,10 +242,14 @@ function App() {
 
       <section className="hero">
         <div className="eyebrow">AI-POWERED BUSINESS COMMERCE</div>
-        <h1>Smarter purchasing.<br />Payments with control.</h1>
+        <h1>
+          Smarter purchasing.
+          <br />
+          Payments with control.
+        </h1>
         <p>
-          Describe what your business needs. Start with a budget,
-          review the request, and keep purchasing decisions in your hands.
+          Describe what your business needs. Start with a budget, review the
+          request, and keep purchasing decisions in your hands.
         </p>
       </section>
 
@@ -116,7 +262,7 @@ function App() {
           <input
             id="product"
             value={product}
-            onChange={(e) => setProduct(e.target.value)}
+            onChange={(event) => setProduct(event.target.value)}
             minLength={2}
             maxLength={150}
             required
@@ -132,7 +278,7 @@ function App() {
                 max="100000000"
                 step="0.01"
                 value={budget}
-                onChange={(e) => setBudget(e.target.value)}
+                onChange={(event) => setBudget(event.target.value)}
                 required
               />
             </div>
@@ -145,7 +291,7 @@ function App() {
                 max="100000"
                 step="1"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(event) => setQuantity(event.target.value)}
                 required
               />
             </div>
@@ -157,8 +303,32 @@ function App() {
           </button>
 
           <p className="privacy-note">
-            Demo only. This action does not initiate a payment.
+            Saving a purchase request does not initiate a payment.
           </p>
+
+          <div className="paypal-test-section">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={startPayPalCheckout}
+              disabled={paypalLoading || !result?.id}
+              title={!result?.id ? "Generate a purchase request first" : "Start Sandbox test checkout"}
+            >
+              {paypalLoading ? "Processing..." : "Run $1.00 PayPal Sandbox Test"}
+              <span>→</span>
+            </button>
+            <p className="privacy-note">
+              Sandbox test only. The $1.00 USD test is separate from your INR
+              purchase budget and does not pay for the goods.
+            </p>
+          </div>
+
+          {paypalMessage && <p role="status">{paypalMessage}</p>}
+          {paypalError && (
+            <p className="error-message" role="alert">
+              {paypalError}
+            </p>
+          )}
         </form>
 
         <section className="result-card">
@@ -170,16 +340,17 @@ function App() {
               <div className="empty-icon">✳</div>
               <h3>Your next purchase starts here</h3>
               <p>
-                Enter a product, budget, and quantity to generate
-                your first purchase request.
+                Enter a product, budget, and quantity to generate your first
+                purchase request.
               </p>
             </div>
           )}
 
           {loading && <p>Saving your request to MongoDB...</p>}
-
           {error && (
-            <div className="error-message" role="alert">{error}</div>
+            <div className="error-message" role="alert">
+              {error}
+            </div>
           )}
 
           {result && (
@@ -194,7 +365,6 @@ function App() {
                 <span>Total budget</span>
                 <strong>{formatINR(result.total_budget)}</strong>
               </div>
-
               <div className="metric">
                 <span>Budget per item</span>
                 <strong>{formatINR(result.budget_per_item)}</strong>
@@ -208,23 +378,68 @@ function App() {
               <p className="demo-notice">
                 {result.saved_to_database
                   ? "Purchase request saved successfully to MongoDB Atlas."
-                  : "Demo result only."}
-                {" "}No live product search or AI recommendation has been performed.
+                  : "Demo result only."}{" "}
+                No live product search or AI recommendation has been performed.
               </p>
 
               <div className="approval-status">
-                <span>Payment status</span>
-                <strong>{result.payment_status || "Not started"}</strong>
+                <span>Actual purchase payment</span>
+                <strong>{result.payment_status || "not_started"}</strong>
               </div>
 
+              <div className="approval-status">
+                <span>Sandbox test payment</span>
+                <strong>
+                  {result.sandbox_test_payment_status || "not_started"}
+                </strong>
+              </div>
+
+              <p className="privacy-note">
+                A completed $1.00 Sandbox test does not pay the ₹ purchase budget.
+              </p>
+
               {result.id && (
-                <p className="muted">
-                  Request ID: {result.id}
-                </p>
+                <p className="muted">Request ID: {result.id}</p>
               )}
             </div>
           )}
         </section>
+      </section>
+
+      <section className="history-section agent-section">
+        <div className="history-heading">
+          <div>
+            <div className="section-label">MULTI-AGENT WORKFLOW</div>
+            <h2>AI Agent Grid</h2>
+            <p className="muted">Run a coordinated purchasing analysis on your saved request.</p>
+          </div>
+          <button type="button" className="refresh-button" onClick={runAgentGrid} disabled={!result?.id || agentLoading}>
+            {agentLoading ? "Agents working..." : "Run Agent Grid"}
+          </button>
+        </div>
+        <div className="request-list agent-grid">
+          {[
+            ["Research Agent", "Supplier research plan and comparison checklist"],
+            ["Budget Agent", "Per-unit budget and budget guardrails"],
+            ["Risk Agent", "Missing information and procurement risks"],
+            ["Procurement Agent", "Human approval and next-step recommendation"],
+          ].map(([name, description]) => (
+            <article className="saved-request agent-card" key={name}>
+              <h3>{name}</h3><p className="muted">{description}</p>
+              <span className="status-pill">{agentResult ? "Analysis complete" : "Ready to run"}</span>
+            </article>
+          ))}
+        </div>
+        <p className="privacy-note">This first agent grid is a deterministic workflow prototype using your saved request. It does not yet call an external LLM or search live suppliers.</p>
+        {agentError && <p className="error-message" role="alert">{agentError}</p>}
+        {agentResult && (
+          <div className="recommendation agent-output">
+            <strong>Agent workflow results</strong>
+            <p>{agentResult.summary}</p>
+            <ul>{(agentResult.checklist || []).map((item, index) => <li key={index}>{item}</li>)}</ul>
+            <p className="muted">Workflow: {agentResult.workflow_status} · Request: {agentResult.purchase_request_id}</p>
+          </div>
+        )}
       </section>
 
       <section className="history-section">
@@ -263,7 +478,12 @@ function App() {
                 </div>
                 <div className="saved-request-details">
                   <strong>{formatINR(request.budget)}</strong>
-                  <span>{request.payment_status || "Not started"}</span>
+                  <span>
+                    Purchase: {request.payment_status || "not_started"}
+                  </span>
+                  <span>
+                    Sandbox test: {request.sandbox_test_payment_status || "not_started"}
+                  </span>
                 </div>
               </article>
             ))}
