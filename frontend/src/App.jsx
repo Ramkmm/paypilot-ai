@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").trim().replace(/\/$/, "");
+
+async function readApiResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return response.json();
+  const text = await response.text();
+  throw new Error(text || `API request failed (${response.status}).`);
+}
 
 function formatINR(value) {
   return Number(value).toLocaleString("en-IN", {
@@ -36,7 +43,7 @@ function App() {
 
     try {
       const response = await fetch(`${API_URL}/api/purchase/requests`);
-      const data = await response.json();
+      const data = await readApiResponse(response);
 
       if (!response.ok) {
         throw new Error(data.detail || "Unable to load requests.");
@@ -57,18 +64,23 @@ function App() {
   useEffect(() => {
     const pathname = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
+    // Support both legacy path redirects and root-query redirects from PayPal.
+    // Root-query redirects avoid Vercel's 404 for a direct /paypal/return visit.
+    const paypalAction = params.get("paypal");
+    const isCancel = pathname === "/paypal/cancel" || paypalAction === "cancel";
+    const isReturn = pathname === "/paypal/return" || paypalAction === "return";
 
-    if (pathname === "/paypal/cancel") {
-      setPaypalMessage("PayPal checkout was cancelled. No payment was completed.");
+    if (isCancel) {
       window.history.replaceState({}, "", "/");
+      setPaypalMessage("PayPal checkout was cancelled. No payment was completed.");
       return;
     }
 
-    if (pathname !== "/paypal/return") {
+    if (!isReturn) {
       return;
     }
 
-    const orderId = params.get("token");
+    const orderId = params.get("token") || params.get("order_id");
     window.history.replaceState({}, "", "/");
 
     if (!orderId) {
@@ -90,7 +102,7 @@ function App() {
           body: JSON.stringify({ order_id: orderId }),
         });
 
-        const data = await response.json();
+        const data = await readApiResponse(response);
 
         if (!response.ok) {
           throw new Error(
@@ -149,7 +161,7 @@ function App() {
         }),
       });
 
-      const data = await response.json();
+      const data = await readApiResponse(response);
 
       if (!response.ok) {
         throw new Error(data.detail || "Purchase request failed.");
@@ -182,7 +194,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ purchase_request_id: result.id }),
       });
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok) throw new Error(data.detail || "Agent workflow failed.");
       setAgentResult(data);
     } catch (err) {
@@ -209,7 +221,7 @@ function App() {
         body: JSON.stringify({ purchase_request_id: result.id }),
       });
 
-      const data = await response.json();
+      const data = await readApiResponse(response);
 
       if (!response.ok) {
         throw new Error(
