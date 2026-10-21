@@ -19,18 +19,23 @@ app = FastAPI(
     version="0.3.0",
 )
 
-# Local development works by default. Add the deployed Vercel origin to
-# FRONTEND_ORIGINS when deploying, e.g. https://your-app.vercel.app
+# Frontend URL used for PayPal's approval return/cancel redirects.
+# Override FRONTEND_URL in Render if the deployed frontend URL changes.
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "https://paypilot-ai-ten.vercel.app",
+).rstrip("/")
+
+# Local development and the deployed Vercel frontend are allowed by CORS.
+# Override FRONTEND_ORIGINS in Render if you use another frontend domain.
 frontend_origins = [
-    origin.strip()
+    origin.strip().rstrip("/")
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "http://localhost:5173,https://paypilot-ai-ten.vercel.app"
+        "http://localhost:5173,https://paypilot-ai-ten.vercel.app",
     ).split(",")
     if origin.strip()
 ]
-return_url = f"{FRONTEND_URL}/paypal/return"
-cancel_url = f"{FRONTEND_URL}/paypal/cancel"
 
 app.add_middleware(
     CORSMiddleware,
