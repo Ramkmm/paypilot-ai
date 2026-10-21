@@ -442,14 +442,82 @@ function App() {
             </article>
           ))}
         </div>
-        <p className="privacy-note">This first agent grid is a deterministic workflow prototype using your saved request. It does not yet call an external LLM or search live suppliers.</p>
+        <p className="privacy-note">
+          Demo mode: supplier offers are synthetic examples, not live Amazon,
+          Flipkart, or Google Shopping listings. No supplier API or external LLM
+          is connected yet.
+        </p>
         {agentError && <p className="error-message" role="alert">{agentError}</p>}
         {agentResult && (
           <div className="recommendation agent-output">
+            <div className="demo-data-banner">
+              <strong>{agentResult.data_source_label || "DEMO DATA"}</strong>
+              <span>Verify real prices and availability before buying.</span>
+            </div>
             <strong>Agent workflow results</strong>
             <p>{agentResult.summary}</p>
+
+            <div className="agent-status-list">
+              {(agentResult.agents || []).map((agent) => (
+                <article className="agent-status-row" key={agent.id || agent.name}>
+                  <div>
+                    <strong>{agent.name}</strong>
+                    <p>{agent.result}</p>
+                  </div>
+                  <span className="status-pill">{agent.status || "completed"}</span>
+                </article>
+              ))}
+            </div>
+
+            <h3>Supplier comparison</h3>
+            <p className="muted">Illustrative totals for {result?.quantity || 0} unit(s). Delivery, tax, stock, and seller terms are not verified.</p>
+            <div className="supplier-table-wrap">
+              <table className="supplier-table">
+                <thead>
+                  <tr>
+                    <th>Demo source</th>
+                    <th>Unit price</th>
+                    <th>Qty</th>
+                    <th>Estimated total</th>
+                    <th>Budget check</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(agentResult.offers || []).map((offer) => (
+                    <tr key={offer.supplier}>
+                      <td>
+                        <strong>{offer.supplier}</strong>
+                        <span className="table-subtitle">{offer.marketplace_style}</span>
+                      </td>
+                      <td>{formatINR(offer.unit_price)}</td>
+                      <td>{offer.quantity}</td>
+                      <td>
+                        <strong>{formatINR(offer.estimated_total)}</strong>
+                        <span className="table-subtitle">{offer.delivery_days}</span>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${offer.within_budget ? "status-ok" : "status-warning"}`}>
+                          {offer.within_budget ? `Under by ${formatINR(offer.budget_remaining)}` : `Over by ${formatINR(Math.abs(offer.budget_remaining))}`}
+                        </span>
+                        {offer.recommended && <span className="recommended-label">Recommended demo</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="recommendation supplier-recommendation">
+              <strong>Procurement Agent recommendation</strong>
+              <p>{agentResult.recommendation}</p>
+            </div>
+
             <ul>{(agentResult.checklist || []).map((item, index) => <li key={index}>{item}</li>)}</ul>
             <p className="muted">Workflow: {agentResult.workflow_status} · Request: {agentResult.purchase_request_id}</p>
+            <p className="privacy-note">
+              Buyer approval is required. The separate $1.00 PayPal Sandbox test only
+              demonstrates payment integration; it does not purchase these items.
+            </p>
           </div>
         )}
       </section>

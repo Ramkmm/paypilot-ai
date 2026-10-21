@@ -272,46 +272,135 @@ def get_purchase_requests():
 
 @app.post("/api/agents/analyze")
 def analyze_purchase_with_agent_grid(request: AgentAnalysisRequest):
-    """Run a deterministic multi-agent workflow prototype on a saved request.
+    """Run a transparent, rule-based procurement demo with synthetic supplier offers.
 
-    This endpoint is intentionally transparent: it does not claim to use an
-    external LLM or live supplier search. Those integrations can be added later.
+    Supplier offers are illustrative demo data, not live prices or actual listings
+    from Amazon, Flipkart, or Google Shopping.
     """
     require_mongodb()
     if not ObjectId.is_valid(request.purchase_request_id):
         raise HTTPException(status_code=400, detail="Invalid purchase request ID.")
+
     try:
-        purchase = purchase_collection.find_one({"_id": ObjectId(request.purchase_request_id)})
+        purchase = purchase_collection.find_one(
+            {"_id": ObjectId(request.purchase_request_id)}
+        )
     except PyMongoError:
         raise HTTPException(status_code=503, detail="Could not load purchase request.")
+
     if purchase is None:
         raise HTTPException(status_code=404, detail="Purchase request not found.")
 
-    product = str(purchase.get("product", "requested item"))
+    product = str(purchase.get("product", "requested item")).strip()
     quantity = int(purchase.get("quantity", 1))
     budget = float(purchase.get("budget", 0))
     per_item = float(purchase.get("budget_per_item", budget / max(quantity, 1)))
+
+    # Synthetic prices intentionally make this a demonstrable workflow without
+    # implying that these are current prices from any real marketplace.
+    normalized = product.lower()
+    if "laptop bag" in normalized or "laptop bags" in normalized:
+        demo_unit_prices = [1400.00, 1500.00, 1650.00]
+    elif "office chair" in normalized or "office chairs" in normalized:
+        demo_unit_prices = [1800.00, 2100.00, 2400.00]
+    else:
+        demo_unit_prices = [
+            round(max(100.0, per_item * 0.72), 2),
+            round(max(100.0, per_item * 0.86), 2),
+            round(max(100.0, per_item * 0.95), 2),
+        ]
+
+    suppliers = [
+        {
+            "supplier": "Marketplace A",
+            "marketplace_style": "Amazon-style demo",
+            "unit_price": demo_unit_prices[2],
+            "delivery_fee": 0.00,
+            "delivery_days": "3–5 days (illustrative)",
+            "seller_note": "Demo seller; not an actual Amazon listing",
+        },
+        {
+            "supplier": "Marketplace B",
+            "marketplace_style": "Flipkart-style demo",
+            "unit_price": demo_unit_prices[1],
+            "delivery_fee": 0.00,
+            "delivery_days": "4–6 days (illustrative)",
+            "seller_note": "Demo seller; not an actual Flipkart listing",
+        },
+        {
+            "supplier": "Search Listing C",
+            "marketplace_style": "Google Shopping-style demo",
+            "unit_price": demo_unit_prices[0],
+            "delivery_fee": 0.00,
+            "delivery_days": "2–7 days (illustrative)",
+            "seller_note": "Synthetic comparison result; not a live Google Shopping result",
+        },
+    ]
+
+    for offer in suppliers:
+        offer["quantity"] = quantity
+        offer["subtotal"] = round(offer["unit_price"] * quantity, 2)
+        offer["estimated_total"] = round(offer["subtotal"] + offer["delivery_fee"], 2)
+        offer["within_budget"] = offer["estimated_total"] <= budget
+        offer["budget_remaining"] = round(budget - offer["estimated_total"], 2)
+        offer["unit_price"] = round(offer["unit_price"], 2)
+
+    suppliers.sort(key=lambda item: item["estimated_total"])
+    recommended = next((offer for offer in suppliers if offer["within_budget"]), None)
+    if recommended:
+        recommended["recommended"] = True
+        recommendation_text = (
+            f"{recommended['supplier']} is the lowest-cost illustrative demo offer at "
+            f"₹{recommended['estimated_total']:,.2f}, leaving "
+            f"₹{recommended['budget_remaining']:,.2f} under budget. Verify real seller "
+            "prices, stock, shipping, taxes, warranty, and returns before buying."
+        )
+    else:
+        recommendation_text = (
+            "None of the illustrative offers fit the total budget. Increase the budget "
+            "or reduce quantity, then verify current supplier listings."
+        )
+
+    for offer in suppliers:
+        offer.setdefault("recommended", False)
+
     checklist = [
-        f"Research Agent: identify at least three suppliers for {product} and compare delivered prices.",
-        f"Budget Agent: use ₹{per_item:,.2f} per item as the target across {quantity} units; total cap ₹{budget:,.2f}.",
-        "Risk Agent: verify seller identity, taxes, delivery date, warranty, return terms, and invoice before approval.",
-        "Procurement Agent: present the comparison to a human approver; do not place a real order automatically.",
+        f"Research Agent: generated {len(suppliers)} synthetic offers for {product}; no live marketplace API was used.",
+        f"Budget Agent: budget ₹{budget:,.2f}; target ₹{per_item:,.2f} per item for {quantity} units.",
+        "Risk Agent: prices, delivery windows, stock, seller ratings, taxes, and return terms are illustrative and must be verified.",
+        "Procurement Agent: recommend the lowest illustrative offer within budget; buyer approval is required before any real purchase.",
     ]
     summary = (
-        f"The agent workflow prepared a procurement checklist for {quantity} {product}. "
-        f"Target spend is ₹{budget:,.2f} total (₹{per_item:,.2f} per item). "
-        "No live supplier prices were fetched and no purchase or payment was initiated."
+        f"Compared {len(suppliers)} synthetic demo offers for {quantity} × {product}. "
+        f"Total budget: ₹{budget:,.2f}; per-item target: ₹{per_item:,.2f}. "
+        "These are not live supplier listings and no real order or purchase payment was initiated."
     )
+
     analysis = {
         "purchase_request_id": request.purchase_request_id,
-        "workflow_status": "completed_rule_based_prototype",
+        "workflow_status": "demo_supplier_comparison_ready_for_buyer_approval",
         "summary": summary,
         "checklist": checklist,
-        "agents": ["research", "budget", "risk", "procurement"],
+        "agents": [
+            {"id": "research", "name": "Research Agent", "status": "completed",
+             "result": f"Prepared {len(suppliers)} synthetic offers; live supplier search is not connected."},
+            {"id": "budget", "name": "Budget Agent", "status": "completed",
+             "result": f"Calculated totals for {quantity} units against a ₹{budget:,.2f} budget."},
+            {"id": "risk", "name": "Risk Agent", "status": "completed",
+             "result": "Flagged that prices, stock, shipping, taxes, and seller details are unverified demo values."},
+            {"id": "procurement", "name": "Procurement Agent", "status": "completed",
+             "result": "Sorted offers by estimated total and retained buyer approval as a required step."},
+        ],
+        "offers": suppliers,
+        "recommendation": recommendation_text,
+        "data_source": "synthetic_demo_data",
+        "data_source_label": "DEMO DATA — NOT LIVE SUPPLIER PRICES",
         "uses_external_llm": False,
         "uses_live_supplier_search": False,
+        "requires_buyer_approval": True,
         "created_at": datetime.now(timezone.utc),
     }
+
     try:
         purchase_collection.update_one(
             {"_id": ObjectId(request.purchase_request_id)},
@@ -319,6 +408,7 @@ def analyze_purchase_with_agent_grid(request: AgentAnalysisRequest):
         )
     except PyMongoError:
         raise HTTPException(status_code=503, detail="Could not save agent analysis.")
+
     return analysis
 
 
