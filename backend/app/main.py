@@ -1,5 +1,6 @@
 import os
 import uuid
+from urllib.parse import quote_plus
 from datetime import datetime, timezone
 
 import requests
@@ -268,6 +269,57 @@ def get_purchase_requests():
         )
 
     return {"requests": requests_list}
+
+
+
+
+class ProductSearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=150)
+
+
+@app.get("/api/products/search")
+def search_marketplaces(query: str):
+    """Return real marketplace search pages, not fabricated product offers.
+
+    These links let a buyer search current listings on each marketplace. They
+    do not expose live price/stock data and do not automatically create affiliate
+    links; use an approved affiliate tool or SiteStripe for tracked product URLs.
+    """
+    clean_query = " ".join(query.split())
+    if len(clean_query) < 2 or len(clean_query) > 150:
+        raise HTTPException(status_code=422, detail="Query must be 2–150 characters.")
+
+    q = quote_plus(clean_query)
+    return {
+        "query": clean_query,
+        "data_source": "live_marketplace_search_pages",
+        "data_source_label": "Marketplace search links — prices and stock are not verified by PayPilot AI",
+        "offers": [
+            {
+                "marketplace": "Amazon India",
+                "url": f"https://www.amazon.in/s?k={q}",
+                "status": "external_search",
+                "affiliate_link_required": True,
+            },
+            {
+                "marketplace": "Flipkart",
+                "url": f"https://www.flipkart.com/search?q={q}",
+                "status": "external_search",
+                "affiliate_link_required": True,
+            },
+            {
+                "marketplace": "Walmart US",
+                "url": f"https://www.walmart.com/search?q={q}",
+                "status": "external_search",
+                "affiliate_link_required": True,
+            },
+        ],
+        "notice": (
+            "These are real marketplace search pages, not verified product offers. "
+            "Open a listing, verify price, stock, shipping and seller terms, then "
+            "create a tracked affiliate link through your approved affiliate account."
+        ),
+    }
 
 
 @app.post("/api/agents/analyze")
